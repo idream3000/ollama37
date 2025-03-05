@@ -8,6 +8,19 @@
 
 Get up and running with large language models.
 
+K80 support.
+Ubuntu 22.04;
+cmake, golang;
+gcc-10 (important);
+nvidia driver 470-server (important);
+CUDA toolskit 11.4 (important).
+
+1. git clone; 
+2. "cmake -B build";
+3. "cmake --build build";
+4. "go run . serve" to start;
+5. or "go build ." to build ollama.
+
 ### macOS
 
 [Download](https://ollama.com/download/Ollama-darwin.zip)
