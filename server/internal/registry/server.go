@@ -1,29 +1,28 @@
-// Package registry provides an http.Handler for handling local Ollama API
-// requests for performing tasks related to the ollama.com model registry and
-// the local disk cache.
+// Package registry implements an http.Handler for handling local Ollama API
+// model management requests. See [Local] for details.
 package registry
 
 import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
+	"sync"
+	"time"
 
+	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 )
 
-// Local is an http.Handler for handling local Ollama API requests for
-// performing tasks related to the ollama.com model registry combined with the
-// local disk cache.
+// Local implements an http.Handler for handling local Ollama API model
+// management requests, such as pushing, pulling, and deleting models.
 //
-// It is not concern of Local, or this package, to handle model creation, which
-// proceeds any registry operations for models it produces.
-//
-// NOTE: The package built for dealing with model creation should use
-// [DefaultCache] to access the blob store and not attempt to read or write
-// directly to the blob disk cache.
+// It can be arranged for all unknown requests to be passed through to a
+// fallback handler, if one is provided.
 type Local struct {
 	Client *ollama.Registry // required
 	Logger *slog.Logger     // required
@@ -59,6 +58,7 @@ func (e serverError) Error() string {
 var (
 	errMethodNotAllowed = &serverError{405, "method_not_allowed", "method not allowed"}
 	errNotFound         = &serverError{404, "not_found", "not found"}
+	errModelNotFound    = &serverError{404, "not_found", "model not found"}
 	errInternalError    = &serverError{500, "internal_error", "internal server error"}
 )
 
@@ -109,6 +109,8 @@ func (s *Local) serveHTTP(rec *statusCodeRecorder, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/delete":
 			return false, s.handleDelete(rec, r)
+		case "/api/pull":
+			return false, s.handlePull(rec, r)
 		default:
 			if s.Fallback != nil {
 				s.Fallback.ServeHTTP(rec, r)
@@ -169,8 +171,16 @@ func (s *Local) serveHTTP(rec *statusCodeRecorder, r *http.Request) {
 }
 
 type params struct {
-	DeprecatedName string `json:"name"`  // Use [params.model]
-	Model          string `json:"model"` // Use [params.model]
+	// DeprecatedName is the name of the model to push, pull, or delete,
+	// but is deprecated. New clients should use [Model] instead.
+	//
+	// Use [model()] to get the model name for both old and new API requests.
+	DeprecatedName string `json:"name"`
+
+	// Model is the name of the model to push, pull, or delete.
+	//
+	// Use [model()] to get the model name for both old and new API requests.
+	Model string `json:"model"`
 
 	// AllowNonTLS is a flag that indicates a client using HTTP
 	// is doing so, deliberately.
@@ -183,14 +193,30 @@ type params struct {
 	// confusing flags such as this.
 	AllowNonTLS bool `json:"insecure"`
 
-	// ProgressStream is a flag that indicates the client is expecting a stream of
-	// progress updates.
-	ProgressStream bool `json:"stream"`
+	// Stream, if true, will make the server send progress updates in a
+	// streaming of JSON objects. If false, the server will send a single
+	// JSON object with the final status as "success", or an error object
+	// if an error occurred.
+	//
+	// Unfortunately, this API was designed to be a bit awkward. Stream is
+	// defined to default to true if not present, so we need a way to check
+	// if the client decisively set it to false. So, we use a pointer to a
+	// bool. Gross.
+	//
+	// Use [stream()] to get the correct value for this field.
+	Stream *bool `json:"stream"`
 }
 
 // model returns the model name for both old and new API requests.
 func (p params) model() string {
 	return cmp.Or(p.Model, p.DeprecatedName)
+}
+
+func (p params) stream() bool {
+	if p.Stream == nil {
+		return true
+	}
+	return *p.Stream
 }
 
 func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
@@ -206,12 +232,119 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !ok {
-		return &serverError{404, "not_found", "model not found"}
+		return errModelNotFound
 	}
-	if s.Prune == nil {
-		return nil
+	if s.Prune != nil {
+		return s.Prune()
 	}
-	return s.Prune()
+	return nil
+}
+
+type progressUpdateJSON struct {
+	Status    string      `json:"status,omitempty,omitzero"`
+	Digest    blob.Digest `json:"digest,omitempty,omitzero"`
+	Total     int64       `json:"total,omitempty,omitzero"`
+	Completed int64       `json:"completed,omitempty,omitzero"`
+}
+
+func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != "POST" {
+		return errMethodNotAllowed
+	}
+
+	p, err := decodeUserJSON[*params](r.Body)
+	if err != nil {
+		return err
+	}
+
+	enc := json.NewEncoder(w)
+	if !p.stream() {
+		if err := s.Client.Pull(r.Context(), p.model()); err != nil {
+			if errors.Is(err, ollama.ErrModelNotFound) {
+				return errModelNotFound
+			}
+			return err
+		}
+		return enc.Encode(progressUpdateJSON{Status: "success"})
+	}
+
+	maybeFlush := func() {
+		fl, _ := w.(http.Flusher)
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+	defer maybeFlush()
+
+	var mu sync.Mutex
+	progress := make(map[*ollama.Layer]int64)
+
+	progressCopy := make(map[*ollama.Layer]int64, len(progress))
+	flushProgress := func() {
+		defer maybeFlush()
+
+		// TODO(bmizerany): Flushing every layer in one update doesn't
+		// scale well. We could flush only the modified layers or track
+		// the full download. Needs further consideration, though it's
+		// fine for now.
+		mu.Lock()
+		maps.Copy(progressCopy, progress)
+		mu.Unlock()
+		for l, n := range progressCopy {
+			enc.Encode(progressUpdateJSON{
+				Digest:    l.Digest,
+				Total:     l.Size,
+				Completed: n,
+			})
+		}
+	}
+	defer flushProgress()
+
+	t := time.NewTicker(1000 * time.Hour) // "unstarted" timer
+	start := sync.OnceFunc(func() {
+		flushProgress() // flush initial state
+		t.Reset(100 * time.Millisecond)
+	})
+	ctx := ollama.WithTrace(r.Context(), &ollama.Trace{
+		Update: func(l *ollama.Layer, n int64, err error) {
+			if n > 0 {
+				// Block flushing progress updates until every
+				// layer is accounted for. Clients depend on a
+				// complete model size to calculate progress
+				// correctly; if they use an incomplete total,
+				// progress indicators would erratically jump
+				// as new layers are registered.
+				start()
+			}
+			mu.Lock()
+			progress[l] += n
+			mu.Unlock()
+		},
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Client.Pull(ctx, p.model())
+	}()
+
+	for {
+		select {
+		case <-t.C:
+			flushProgress()
+		case err := <-done:
+			flushProgress()
+			if err != nil {
+				var status string
+				if errors.Is(err, ollama.ErrModelNotFound) {
+					status = fmt.Sprintf("error: model %q not found", p.model())
+				} else {
+					status = fmt.Sprintf("error: %v", err)
+				}
+				enc.Encode(progressUpdateJSON{Status: status})
+			}
+			return nil
+		}
+	}
 }
 
 func decodeUserJSON[T any](r io.Reader) (T, error) {

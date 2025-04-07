@@ -37,6 +37,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_MINICPM3,         "minicpm3"         },
     { LLM_ARCH_GEMMA,            "gemma"            },
     { LLM_ARCH_GEMMA2,           "gemma2"           },
+    { LLM_ARCH_GEMMA3,           "gemma3"           },
     { LLM_ARCH_STARCODER2,       "starcoder2"       },
     { LLM_ARCH_MAMBA,            "mamba"            },
     { LLM_ARCH_XVERSE,           "xverse"           },
@@ -64,6 +65,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_CHAMELEON,        "chameleon"        },
     { LLM_ARCH_SOLAR,            "solar"            },
     { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
+    { LLM_ARCH_MISTRAL3,         "mistral3"         },
     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
 };
 
@@ -805,6 +807,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
         },
     },
     {
+        LLM_ARCH_GEMMA3,
+        {
+            { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
+            { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
+            { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
+            { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
+            { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
+            { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
+            { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
+            { LLM_TENSOR_ATTN_POST_NORM,  "blk.%d.post_attention_norm" },
+            { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
+            { LLM_TENSOR_FFN_GATE,        "blk.%d.ffn_gate" },
+            { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
+            { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
+            { LLM_TENSOR_FFN_POST_NORM,   "blk.%d.post_ffw_norm" },
+        },
+    },
+    {
         LLM_ARCH_STARCODER2,
         {
             { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
@@ -1351,6 +1371,22 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_POS_NET_ATTN_V,    "posnet.%d.attn_v" },
             { LLM_TENSOR_POS_NET_ATTN_OUT,  "posnet.%d.attn_output" },
         },
+    },
+    {
+        LLM_ARCH_MISTRAL3,
+        {
+            { LLM_TENSOR_TOKEN_EMBD,  "token_embd" },
+            { LLM_TENSOR_OUTPUT_NORM, "output_norm" },
+            { LLM_TENSOR_ATTN_NORM,   "blk.%d.attn_norm" },
+            { LLM_TENSOR_ATTN_Q,      "blk.%d.attn_q" },
+            { LLM_TENSOR_ATTN_K,      "blk.%d.attn_k" },
+            { LLM_TENSOR_ATTN_V,      "blk.%d.attn_v" },
+            { LLM_TENSOR_ATTN_OUT,    "blk.%d.attn_output" },
+            { LLM_TENSOR_FFN_NORM,    "blk.%d.ffn_norm" },
+            { LLM_TENSOR_FFN_GATE,    "blk.%d.ffn_gate" },
+            { LLM_TENSOR_FFN_UP,      "blk.%d.ffn_up" },
+            { LLM_TENSOR_FFN_DOWN,    "blk.%d.ffn_down" },
+        }
     },
     {
         LLM_ARCH_UNKNOWN,
