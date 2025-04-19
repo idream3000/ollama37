@@ -6,20 +6,299 @@
 
 # Ollama
 
-Get up and running with large language models.
+## Installation Guide: CUDA 11.4 on Rocky Linux 8
 
-K80 support.
-Ubuntu 22.04;
-cmake, golang;
-gcc-10 (important);
-nvidia driver 470-server (important);
-CUDA toolskit 11.4 (important).
+**Prerequisites:**
 
-1. git clone; 
-2. "cmake -B build";
-3. "cmake --build build";
-4. "go run . serve" to start;
-5. or "go build ." to build ollama.
+*   A Rocky Linux 8 system or a container based on Rocky Linux 8.
+*   Root privileges.
+*   Internet connectivity.
+
+**Steps:**
+
+1.  **Update the system:**  Start by updating the operating system packages.
+
+    ```bash
+    dnf -y update
+    ```
+
+2.  **Install EPEL Repository:**  The Extra Packages for Enterprise Linux (EPEL) repository is required for some dependencies.
+
+    ```bash
+    dnf -y install epel-release
+    ```
+
+3.  **Add NVIDIA CUDA Repository:** Add the NVIDIA CUDA repository for RHEL 8. This allows `dnf` to find and install the necessary CUDA packages.
+
+    ```bash
+    dnf -y config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+    ```
+
+4.  **Install NVIDIA Driver (Version 470):**  Install the NVIDIA driver version 470 using the DKMS (Dynamic Kernel Module Support) system.  This ensures the driver is automatically rebuilt when the kernel is updated.
+
+    ```bash
+    dnf -y module install nvidia-driver:470-dkms
+    ```
+
+5.  **Install CUDA Toolkit 11.4:** Install the CUDA Toolkit version 11.4.
+
+    ```bash
+    dnf -y install cuda-11-4
+    ```
+
+6.  **Set up CUDA Environment Variables (Optional but Recommended):**  Copy a script (`cuda-11.4.sh`) to `/etc/profile.d/` to set environment variables. If performing this installation manually, you need to ensure that the `PATH` and `LD_LIBRARY_PATH` environment variables are correctly configured.  The contents of `cuda-11.4.sh` would typically include something like:
+
+    ```bash
+    # Create /etc/profile.d/cuda-11.4.sh
+    echo "export PATH=/usr/local/cuda-11.4/bin:${PATH}" > /etc/profile.d/cuda-11.4.sh
+    echo "export LD_LIBRARY_PATH=/usr/local/cuda-11.4/lib64:${LD_LIBRARY_PATH}" >> /etc/profile.d/cuda-11.4.sh
+    ```
+
+    To apply these changes, you can either:
+
+    *   Source the script: `source /etc/profile.d/cuda-11.4.sh`
+    *   Log out and log back in to refresh your shell environment.
+    *   Add the lines above to your `.bashrc` or equivalent shell configuration file.
+
+**Verification:**
+
+After installation, verify that CUDA is properly installed by running:
+
+```bash
+nvcc --version
+```
+
+This command should display the CUDA compiler version.  You can also check the installed driver version with:
+
+```bash
+nvidia-smi
+```
+## GCC 10 Installation Guide
+
+This guide details the steps to install GCC 10.
+
+**Steps:**
+
+1. **Update and Install Prerequisites:**
+   - Installs `wget`, `unzip`, and `lbzip2` to download and extract the GCC source code.
+   - Installs the "Development Tools" group, which includes necessary build tools.
+   ```bash
+   dnf -y install wget unzip lbzip2 \
+       && dnf -y groupinstall "Development Tools"
+   ```
+
+2. **Download GCC 10 Source Code:**
+   - Downloads the GCC 10 source code from the gcc-mirror GitHub repository.
+   ```bash
+   cd /usr/local/src \
+       && wget https://github.com/gcc-mirror/gcc/archive/refs/heads/releases/gcc-10.zip
+   ```
+
+3. **Extract Source Code:**
+   - Unzips the downloaded GCC 10 archive.
+   ```bash
+   unzip gcc-10.zip
+   ```
+
+4. **Prepare Build Environment:**
+   - Navigates into the extracted GCC 10 directory.
+   ```bash
+   cd gcc-releases-gcc-10
+   ```
+
+5. **Download Prerequisites:**
+   - Downloads build prerequisites using the `contrib/download_prerequisites` script.
+    ```bash
+    contrib/download_prerequisites
+    ```
+
+6. **Create Installation Directory:**
+    - Creates a directory `/usr/local/gcc-10` where GCC 10 will be installed.
+    ```bash
+    mkdir /usr/local/gcc-10
+    ```
+
+7. **Configure GCC Build:**
+   - Configures the GCC build process using the `./configure` script.  The `--disable-multilib` flag disables the build of multilib support, which can simplify the build.
+   ```bash
+   cd /usr/local/gcc-10 \
+   && /usr/local/src/gcc-releases-gcc-10/configure --disable-multilib
+   ```
+
+8. **Compile GCC:**
+   - Compiles GCC using `make`. The `-j ${nproc}` flag utilizes all available CPU cores for parallel compilation, speeding up the process.
+   ```bash
+   make -j ${nproc}
+   ```
+
+9. **Install GCC:**
+   - Installs the compiled GCC binaries.
+   ```bash
+   make install
+   ```
+
+10. **Post-Install Configuration:**
+    - Configures the system environment for GCC 10 compatibility. This involves creating a file (`/etc/profile.d/gcc-10.sh`) to automatically set `LD_LIBRARY_PATH="/usr/local/lib64"` and adding a configuration file (`/etc/ld.so.conf.d/gcc-10.conf`) to update the dynamic linker's cache.
+    ```bash
+    # Create /etc/profile.d/gcc-10.sh
+    echo "export LD_LIBRARY_PATH=/usr/local/lib64:\$LD_LIBRARY_PATH" > /etc/profile.d/gcc-10.sh
+
+    # Create /etc/ld.so.conf.d/gcc-10.conf
+    echo "/usr/local/lib64" > /etc/ld.so.conf.d/gcc-10.conf
+
+    # Update dynamic linker cache
+    ldconfig
+    ```
+## CMake Installation Guide
+
+1.  **Update Package Manager (Optional but Recommended):**
+
+    While not explicitly in the Dockerfile, it's good practice to start by updating your package lists to ensure you're getting the latest available software. This isn't shown in the provided Dockerfile.
+
+2.  **Install OpenSSL Development Libraries:**
+
+    ```bash
+    dnf -y install openssl-devel
+    ```
+
+    *   **Purpose:** CMake often relies on OpenSSL for secure build configurations.  The `-devel` package provides the header files and libraries necessary for building software that uses OpenSSL.
+    *   **`dnf`:**  This is the package manager for Fedora and related distributions (like CentOS, Rocky Linux, etc.). If you're using a different distribution, use the appropriate package manager (e.g., `apt` for Debian/Ubuntu, `yum` for older CentOS versions).
+    *   **`-y`:**  This flag automatically answers "yes" to any prompts during the installation, making the process non-interactive.
+
+3.  **Download CMake Source Code:**
+
+    ```bash
+    cd /usr/local/src
+    wget https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0.tar.gz
+    ```
+
+    *   **`cd /usr/local/src`:** Changes the current directory to `/usr/local/src`.  This is a common location for temporary source files.
+    *   **`wget`:** Downloads the CMake source code archive from the specified URL.  `wget` is a command-line utility for retrieving files from the web.  Make sure you have `wget` installed.
+
+4.  **Extract the Archive:**
+
+    ```bash
+    tar xvf cmake-4.0.0.tar.gz
+    ```
+
+    *   **`tar`:**  This is the GNU Tape Archiver, a common utility for creating and extracting archive files.
+    *   **`xvf`:** These are the `tar` options:
+        *   `x`: Extract files.
+        *   `v`: Verbose mode (lists the files being extracted).
+        *   `f` : Specifies the archive file.
+
+5.  **Create a CMake Installation Directory:**
+
+    ```bash
+    mkdir /usr/local/cmake-4
+    ```
+
+    *   **`mkdir`:** Creates a new directory. This directory is where CMake will be installed.
+
+6.  **Configure CMake:**
+
+    ```bash
+    cd /usr/local/cmake-4
+    /usr/local/src/cmake-4.0.0/configure
+    ```
+
+    *   **`cd /usr/local/cmake-4`:** Changes the directory to the newly created installation directory.
+    *   **`/usr/local/src/cmake-4.0.0/configure`:**  This script prepares the CMake source code for compilation based on your system's configuration. It checks for dependencies and creates Makefiles.
+
+7.  **Compile CMake:**
+
+    ```bash
+    make -j ${nproc}
+    ```
+
+    *   **`make`:**  This command compiles the CMake source code.
+    *   **`-j ${nproc}`:** This option tells `make` to use multiple processor cores to speed up the compilation. `${nproc}` is an environment variable that contains the number of available processors.
+
+8.  **Install CMake:**
+
+    ```bash
+    make install
+    ```
+
+    *   **`make install`:** This command installs the compiled CMake binaries and related files to the system directories. This step usually requires root privileges (e.g., using `sudo`).
+
+## Go Installation Guide
+
+This guide installs Go version 1.24.2, as specified in the Dockerfile.
+
+1.  **Download Go Distribution:**
+
+    ```bash
+    cd /usr/local
+    wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+    ```
+
+    *   **`cd /usr/local`:** Changes the current directory to `/usr/local`.  This is a common location for installing software.
+    *   **`wget`:** Downloads the Go distribution archive from the specified URL. Ensure that `wget` is installed on your system.
+
+2.  **Extract the Archive:**
+
+    ```bash
+    tar xvf go1.24.2.linux-amd64.tar.gz
+    ```
+
+    *   **`tar`:** The GNU Tape Archiver.
+    *   **`xvf`:**  As described in the CMake installation guide, these options extract the archive and list the extracted files.
+
+## Compilation Guide: Ollama37
+
+**Prerequisites:**
+
+*   Rocky Linux 8.
+*   `git`:  For cloning the repository.
+*   `cmake`:  For managing the C++ build process.
+*   `go`: The Go compiler and toolchain.
+*   `gcc`: version 10 (GNU Compiler Collection) and G++: For C++ compilation (although the Dockerfile explicitly sets these via `CC` and `CXX`)
+*   CUDA Toolkit 11.4
+
+**Steps:**
+
+1.  **Navigate to the Build Directory:**
+
+    ```bash
+    cd /usr/local/src
+    ```
+
+2.  **Clone the Repository:**
+
+    ```bash
+    git clone https://github.com/dogkeeper886/ollama37
+    ```
+
+3.  **Change Directory:**
+
+    ```bash
+    cd ollama37
+    ```
+
+4.  **CMake Configuration:**
+
+    This step configures the build system.  The `CC` and `CXX` variables are explicitly set to `/usr/local/bin/gcc` and `/usr/local/bin/g++`, respectively.  This is critical if the system's default compilers are incompatible or need to be overridden.
+
+    ```bash
+    CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake -B build
+    ```
+
+5.  **CMake Build:**
+
+    This step actually compiles the C++ code using the configuration generated in the previous step.
+
+    ```bash
+    CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake --build build
+    ```
+
+6.  **Go Build:**
+
+    Finally, this step compiles the Go code, creating the `ollama` executable.
+
+    ```bash
+    go build -o ollama .
+    ```
 
 ### macOS
 
@@ -600,3 +879,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.
+
