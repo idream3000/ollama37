@@ -245,6 +245,17 @@ This guide installs Go version 1.24.2, as specified in the Dockerfile.
     *   **`tar`:** The GNU Tape Archiver.
     *   **`xvf`:**  As described in the CMake installation guide, these options extract the archive and list the extracted files.
 
+3. **Post Install Configuration:**
+
+    After copying the binary to `/usr/local`, you should add `/usr/local/go/bin` to the PATH environment variable. To do this, you can create a file in `/etc/profile.d/`.
+
+    ```bash
+    echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh
+    ```
+
+    *   **`echo`:** Prints the string to standard output.
+    *   **`sudo tee`:** Writes the string to a file with superuser privileges. The `-a` option can be used to append to the file instead of overwriting it.
+
 ## Compilation Guide: Ollama37
 
 **Prerequisites:**
