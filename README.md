@@ -311,25 +311,17 @@ This guide installs Go version 1.24.2, as specified in the Dockerfile.
     go build -o ollama .
     ```
 
-### macOS
-
-[Download](https://ollama.com/download/Ollama-darwin.zip)
-
-### Windows
-
-[Download](https://ollama.com/download/OllamaSetup.exe)
-
-### Linux
-
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
-
 ### Docker
 
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+The official [Ollama Docker image](https://hub.docker.com/r/dogkeeper886/ollama37) `dogkeeper886/ollama37` is available on Docker Hub.
+
+This Docker image provides a ready-to-use environment for running Ollama, a local Large Language Model (LLM) runner, specifically optimized to leverage the capabilities of an NVIDIA K80 GPU. This setup is ideal for AI researchers and developers looking to experiment with models in a controlled home lab setting.
+
+To pull the image from Docker Hub, use:
+
+```bash
+docker pull dogkeeper886/ollama37
+```
 
 ### Libraries
 
