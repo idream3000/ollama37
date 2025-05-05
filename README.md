@@ -6,40 +6,322 @@
 
 # Ollama
 
-Get up and running with large language models.
+## Installation Guide: CUDA 11.4 on Rocky Linux 8
 
-K80 support.
-Ubuntu 22.04;
-cmake, golang;
-gcc-10 (important);
-nvidia driver 470-server (important);
-CUDA toolskit 11.4 (important).
+**Prerequisites:**
 
-1. git clone; 
-2. "cmake -B build";
-3. "cmake --build build";
-4. "go run . serve" to start;
-5. or "go build ." to build ollama.
+*   A Rocky Linux 8 system or a container based on Rocky Linux 8.
+*   Root privileges.
+*   Internet connectivity.
 
-### macOS
+**Steps:**
 
-[Download](https://ollama.com/download/Ollama-darwin.zip)
+1.  **Update the system:**  Start by updating the operating system packages.
 
-### Windows
+    ```bash
+    dnf -y update
+    ```
 
-[Download](https://ollama.com/download/OllamaSetup.exe)
+2.  **Install EPEL Repository:**  The Extra Packages for Enterprise Linux (EPEL) repository is required for some dependencies.
 
-### Linux
+    ```bash
+    dnf -y install epel-release
+    ```
 
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
+3.  **Add NVIDIA CUDA Repository:** Add the NVIDIA CUDA repository for RHEL 8. This allows `dnf` to find and install the necessary CUDA packages.
+
+    ```bash
+    dnf -y config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+    ```
+
+4.  **Install NVIDIA Driver (Version 470):**  Install the NVIDIA driver version 470 using the DKMS (Dynamic Kernel Module Support) system.  This ensures the driver is automatically rebuilt when the kernel is updated.
+
+    ```bash
+    dnf -y module install nvidia-driver:470-dkms
+    ```
+
+5.  **Install CUDA Toolkit 11.4:** Install the CUDA Toolkit version 11.4.
+
+    ```bash
+    dnf -y install cuda-11-4
+    ```
+
+6.  **Set up CUDA Environment Variables (Optional but Recommended):**  Copy a script (`cuda-11.4.sh`) to `/etc/profile.d/` to set environment variables. If performing this installation manually, you need to ensure that the `PATH` and `LD_LIBRARY_PATH` environment variables are correctly configured.  The contents of `cuda-11.4.sh` would typically include something like:
+
+    ```bash
+    # Create /etc/profile.d/cuda-11.4.sh
+    echo "export PATH=/usr/local/cuda-11.4/bin:${PATH}" > /etc/profile.d/cuda-11.4.sh
+    echo "export LD_LIBRARY_PATH=/usr/local/cuda-11.4/lib64:${LD_LIBRARY_PATH}" >> /etc/profile.d/cuda-11.4.sh
+    ```
+
+    To apply these changes, you can either:
+
+    *   Source the script: `source /etc/profile.d/cuda-11.4.sh`
+    *   Log out and log back in to refresh your shell environment.
+    *   Add the lines above to your `.bashrc` or equivalent shell configuration file.
+
+**Verification:**
+
+After installation, verify that CUDA is properly installed by running:
+
+```bash
+nvcc --version
 ```
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
+This command should display the CUDA compiler version.  You can also check the installed driver version with:
+
+```bash
+nvidia-smi
+```
+## GCC 10 Installation Guide
+
+This guide details the steps to install GCC 10.
+
+**Steps:**
+
+1. **Update and Install Prerequisites:**
+   - Installs `wget`, `unzip`, and `lbzip2` to download and extract the GCC source code.
+   - Installs the "Development Tools" group, which includes necessary build tools.
+   ```bash
+   dnf -y install wget unzip lbzip2 \
+       && dnf -y groupinstall "Development Tools"
+   ```
+
+2. **Download GCC 10 Source Code:**
+   - Downloads the GCC 10 source code from the gcc-mirror GitHub repository.
+   ```bash
+   cd /usr/local/src \
+       && wget https://github.com/gcc-mirror/gcc/archive/refs/heads/releases/gcc-10.zip
+   ```
+
+3. **Extract Source Code:**
+   - Unzips the downloaded GCC 10 archive.
+   ```bash
+   unzip gcc-10.zip
+   ```
+
+4. **Prepare Build Environment:**
+   - Navigates into the extracted GCC 10 directory.
+   ```bash
+   cd gcc-releases-gcc-10
+   ```
+
+5. **Download Prerequisites:**
+   - Downloads build prerequisites using the `contrib/download_prerequisites` script.
+    ```bash
+    contrib/download_prerequisites
+    ```
+
+6. **Create Installation Directory:**
+    - Creates a directory `/usr/local/gcc-10` where GCC 10 will be installed.
+    ```bash
+    mkdir /usr/local/gcc-10
+    ```
+
+7. **Configure GCC Build:**
+   - Configures the GCC build process using the `./configure` script.  The `--disable-multilib` flag disables the build of multilib support, which can simplify the build.
+   ```bash
+   cd /usr/local/gcc-10 \
+   && /usr/local/src/gcc-releases-gcc-10/configure --disable-multilib
+   ```
+
+8. **Compile GCC:**
+   - Compiles GCC using `make`. The `-j ${nproc}` flag utilizes all available CPU cores for parallel compilation, speeding up the process.
+   ```bash
+   make -j ${nproc}
+   ```
+
+9. **Install GCC:**
+   - Installs the compiled GCC binaries.
+   ```bash
+   make install
+   ```
+
+10. **Post-Install Configuration:**
+    - Configures the system environment for GCC 10 compatibility. This involves creating a file (`/etc/profile.d/gcc-10.sh`) to automatically set `LD_LIBRARY_PATH="/usr/local/lib64"` and adding a configuration file (`/etc/ld.so.conf.d/gcc-10.conf`) to update the dynamic linker's cache.
+    ```bash
+    # Create /etc/profile.d/gcc-10.sh
+    echo "export LD_LIBRARY_PATH=/usr/local/lib64:\$LD_LIBRARY_PATH" > /etc/profile.d/gcc-10.sh
+
+    # Create /etc/ld.so.conf.d/gcc-10.conf
+    echo "/usr/local/lib64" > /etc/ld.so.conf.d/gcc-10.conf
+
+    # Update dynamic linker cache
+    ldconfig
+    ```
+## CMake Installation Guide
+
+1.  **Update Package Manager (Optional but Recommended):**
+
+    While not explicitly in the Dockerfile, it's good practice to start by updating your package lists to ensure you're getting the latest available software. This isn't shown in the provided Dockerfile.
+
+2.  **Install OpenSSL Development Libraries:**
+
+    ```bash
+    dnf -y install openssl-devel
+    ```
+
+    *   **Purpose:** CMake often relies on OpenSSL for secure build configurations.  The `-devel` package provides the header files and libraries necessary for building software that uses OpenSSL.
+    *   **`dnf`:**  This is the package manager for Fedora and related distributions (like CentOS, Rocky Linux, etc.). If you're using a different distribution, use the appropriate package manager (e.g., `apt` for Debian/Ubuntu, `yum` for older CentOS versions).
+    *   **`-y`:**  This flag automatically answers "yes" to any prompts during the installation, making the process non-interactive.
+
+3.  **Download CMake Source Code:**
+
+    ```bash
+    cd /usr/local/src
+    wget https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0.tar.gz
+    ```
+
+    *   **`cd /usr/local/src`:** Changes the current directory to `/usr/local/src`.  This is a common location for temporary source files.
+    *   **`wget`:** Downloads the CMake source code archive from the specified URL.  `wget` is a command-line utility for retrieving files from the web.  Make sure you have `wget` installed.
+
+4.  **Extract the Archive:**
+
+    ```bash
+    tar xvf cmake-4.0.0.tar.gz
+    ```
+
+    *   **`tar`:**  This is the GNU Tape Archiver, a common utility for creating and extracting archive files.
+    *   **`xvf`:** These are the `tar` options:
+        *   `x`: Extract files.
+        *   `v`: Verbose mode (lists the files being extracted).
+        *   `f` : Specifies the archive file.
+
+5.  **Create a CMake Installation Directory:**
+
+    ```bash
+    mkdir /usr/local/cmake-4
+    ```
+
+    *   **`mkdir`:** Creates a new directory. This directory is where CMake will be installed.
+
+6.  **Configure CMake:**
+
+    ```bash
+    cd /usr/local/cmake-4
+    /usr/local/src/cmake-4.0.0/configure
+    ```
+
+    *   **`cd /usr/local/cmake-4`:** Changes the directory to the newly created installation directory.
+    *   **`/usr/local/src/cmake-4.0.0/configure`:**  This script prepares the CMake source code for compilation based on your system's configuration. It checks for dependencies and creates Makefiles.
+
+7.  **Compile CMake:**
+
+    ```bash
+    make -j ${nproc}
+    ```
+
+    *   **`make`:**  This command compiles the CMake source code.
+    *   **`-j ${nproc}`:** This option tells `make` to use multiple processor cores to speed up the compilation. `${nproc}` is an environment variable that contains the number of available processors.
+
+8.  **Install CMake:**
+
+    ```bash
+    make install
+    ```
+
+    *   **`make install`:** This command installs the compiled CMake binaries and related files to the system directories. This step usually requires root privileges (e.g., using `sudo`).
+
+## Go Installation Guide
+
+This guide installs Go version 1.24.2, as specified in the Dockerfile.
+
+1.  **Download Go Distribution:**
+
+    ```bash
+    cd /usr/local
+    wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+    ```
+
+    *   **`cd /usr/local`:** Changes the current directory to `/usr/local`.  This is a common location for installing software.
+    *   **`wget`:** Downloads the Go distribution archive from the specified URL. Ensure that `wget` is installed on your system.
+
+2.  **Extract the Archive:**
+
+    ```bash
+    tar xvf go1.24.2.linux-amd64.tar.gz
+    ```
+
+    *   **`tar`:** The GNU Tape Archiver.
+    *   **`xvf`:**  As described in the CMake installation guide, these options extract the archive and list the extracted files.
+
+3. **Post Install Configuration:**
+
+    After copying the binary to `/usr/local`, you should add `/usr/local/go/bin` to the PATH environment variable. To do this, you can create a file in `/etc/profile.d/`.
+
+    ```bash
+    echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh
+    ```
+
+    *   **`echo`:** Prints the string to standard output.
+    *   **`sudo tee`:** Writes the string to a file with superuser privileges. The `-a` option can be used to append to the file instead of overwriting it.
+
+## Compilation Guide: Ollama37
+
+**Prerequisites:**
+
+*   Rocky Linux 8.
+*   `git`:  For cloning the repository.
+*   `cmake`:  For managing the C++ build process.
+*   `go`: The Go compiler and toolchain.
+*   `gcc`: version 10 (GNU Compiler Collection) and G++: For C++ compilation (although the Dockerfile explicitly sets these via `CC` and `CXX`)
+*   CUDA Toolkit 11.4
+
+**Steps:**
+
+1.  **Navigate to the Build Directory:**
+
+    ```bash
+    cd /usr/local/src
+    ```
+
+2.  **Clone the Repository:**
+
+    ```bash
+    git clone https://github.com/dogkeeper886/ollama37
+    ```
+
+3.  **Change Directory:**
+
+    ```bash
+    cd ollama37
+    ```
+
+4.  **CMake Configuration:**
+
+    This step configures the build system.  The `CC` and `CXX` variables are explicitly set to `/usr/local/bin/gcc` and `/usr/local/bin/g++`, respectively.  This is critical if the system's default compilers are incompatible or need to be overridden.
+
+    ```bash
+    CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake -B build
+    ```
+
+5.  **CMake Build:**
+
+    This step actually compiles the C++ code using the configuration generated in the previous step.
+
+    ```bash
+    CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake --build build
+    ```
+
+6.  **Go Build:**
+
+    Finally, this step compiles the Go code, creating the `ollama` executable.
+
+    ```bash
+    go build -o ollama .
+    ```
 
 ### Docker
 
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+The official [Ollama Docker image](https://hub.docker.com/r/dogkeeper886/ollama37) `dogkeeper886/ollama37` is available on Docker Hub.
+
+This Docker image provides a ready-to-use environment for running Ollama, a local Large Language Model (LLM) runner, specifically optimized to leverage the capabilities of an NVIDIA K80 GPU. This setup is ideal for AI researchers and developers looking to experiment with models in a controlled home lab setting.
+
+To pull the image from Docker Hub, use:
+
+```bash
+docker pull dogkeeper886/ollama37
+```
 
 ### Libraries
 
@@ -67,8 +349,15 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Gemma 3            | 1B         | 815MB | `ollama run gemma3:1b`           |
+| Gemma 3            | 4B         | 3.3GB | `ollama run gemma3`              |
+| Gemma 3            | 12B        | 8.1GB | `ollama run gemma3:12b`          |
+| Gemma 3            | 27B        | 17GB  | `ollama run gemma3:27b`          |
+| QwQ                | 32B        | 20GB  | `ollama run qwq`                 |
 | DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
 | DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
+| Llama 4            | 109B       | 67GB  | `ollama run llama4:scout`        |
+| Llama 4            | 400B       | 245GB | `ollama run llama4:maverick`     |
 | Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
 | Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
 | Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
@@ -78,9 +367,6 @@ Here are some example models that can be downloaded:
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
 | Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
 | Phi 4 Mini         | 3.8B       | 2.5GB | `ollama run phi4-mini`           |
-| Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`           |
-| Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`              |
-| Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`          |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`             |
 | Moondream 2        | 1.4B       | 829MB | `ollama run moondream`           |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`         |
@@ -88,7 +374,7 @@ Here are some example models that can be downloaded:
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`           |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored`   |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`               |
-| Granite-3.2         | 8B         | 4.9GB | `ollama run granite3.2`          |
+| Granite-3.3         | 8B         | 4.9GB | `ollama run granite3.3`          |
 
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
@@ -288,6 +574,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Web & Desktop
 
 - [Open WebUI](https://github.com/open-webui/open-webui)
+- [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
@@ -295,12 +582,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Saddle](https://github.com/jikkuatwork/saddle)
+- [TagSpaces](https://www.tagspaces.org) (A platform for file-based apps, [utilizing Ollama](https://docs.tagspaces.org/ai/) for the generation of tags and descriptions)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Chatbot UI v2](https://github.com/mckaywrigley/chatbot-ui)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
-- [big-AGI](https://github.com/enricoros/big-AGI/blob/main/docs/config-local-ollama.md)
+- [big-AGI](https://github.com/enricoros/big-AGI)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 - [Amica](https://github.com/semperai/amica)
 - [chatd](https://github.com/BruceMacD/chatd)
@@ -321,6 +609,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
 - [IntelliBar](https://intellibar.app/) (AI-powered assistant for macOS)
+- [Jirapt](https://github.com/AliAhmedNada/jirapt) (Jira Integration to generate issues, tasks, epics)
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) (Interactive chat tool that can leverage Ollama models for rapid understanding and navigation of GitHub code repositories)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
@@ -334,13 +623,14 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) (RWKV offline LLM deployment tool, also usable as a client for ChatGPT and Ollama)
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) (app to evaluate and compare models)
 - [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
+- [Casibase](https://casibase.org) (An open source AI knowledge base and dialogue system combining the latest RAG, SSO, ollama support, and multiple large language models.)
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
 - [Shinkai Desktop](https://github.com/dcSpark/shinkai-apps) (Two click install Local AI using Ollama + Files + RAG)
-- [AiLama](https://github.com/zeyoyt/ailama) (A Discord User App that allows you to interact with Ollama anywhere in discord )
+- [AiLama](https://github.com/zeyoyt/ailama) (A Discord User App that allows you to interact with Ollama anywhere in Discord)
 - [Ollama with Google Mesop](https://github.com/rapidarchitect/ollama_mesop/) (Mesop Chat Client implementation with Ollama)
 - [R2R](https://github.com/SciPhi-AI/R2R) (Open-source RAG engine)
-- [Ollama-Kis](https://github.com/elearningshow/ollama-kis) (A simple easy to use GUI with sample custom LLM for Drivers Education)
+- [Ollama-Kis](https://github.com/elearningshow/ollama-kis) (A simple easy-to-use GUI with sample custom LLM for Drivers Education)
 - [OpenGPA](https://opengpa.org) (Open-source offline-first Enterprise Agentic Application)
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
@@ -349,16 +639,16 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
-- [PyGPT](https://github.com/szczyglis-dev/py-gpt) (AI desktop assistant for Linux, Windows and Mac)
-- [Alpaca](https://github.com/Jeffser/Alpaca) (An Ollama client application for linux and macos made with GTK4 and Adwaita)
+- [PyGPT](https://github.com/szczyglis-dev/py-gpt) (AI desktop assistant for Linux, Windows, and Mac)
+- [Alpaca](https://github.com/Jeffser/Alpaca) (An Ollama client application for Linux and macOS made with GTK4 and Adwaita)
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) (AutoGPT Ollama integration)
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
 - [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
-- [Ollama4j Web UI](https://github.com/ollama4j/ollama4j-web-ui) - Java-based Web UI for Ollama built with Vaadin, Spring Boot and Ollama4j
+- [Ollama4j Web UI](https://github.com/ollama4j/ollama4j-web-ui) - Java-based Web UI for Ollama built with Vaadin, Spring Boot, and Ollama4j
 - [PyOllaMx](https://github.com/kspviswa/pyOllaMx) - macOS application capable of chatting with both Ollama and Apple MLX models.
-- [Claude Dev](https://github.com/saoudrizwan/claude-dev) - VSCode extension for multi-file/whole-repo coding
+- [Cline](https://github.com/cline/cline) - Formerly known as Claude Dev is a VSCode extension for multi-file/whole-repo coding
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
-- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy-focused LLM chat interface with optional encryption)
 - [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
 - [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
 - [Tkinter-based client](https://github.com/chyok/ollama-gui) (Python tkinter-based Client for Ollama)
@@ -376,7 +666,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [DualMind](https://github.com/tcsenpai/dualmind) (Experimental app allowing two models to talk to each other in the terminal or in a web interface)
 - [ollamarama-matrix](https://github.com/h1ddenpr0cess20/ollamarama-matrix) (Ollama chatbot for the Matrix chat protocol)
 - [ollama-chat-app](https://github.com/anan1213095357/ollama-chat-app) (Flutter-based chat app)
-- [Perfect Memory AI](https://www.perfectmemory.ai/) (Productivity AI assists personalized by what you have seen on your screen, heard and said in the meetings)
+- [Perfect Memory AI](https://www.perfectmemory.ai/) (Productivity AI assists personalized by what you have seen on your screen, heard, and said in the meetings)
 - [Hexabot](https://github.com/hexastack/hexabot) (A conversational AI builder)
 - [Reddit Rate](https://github.com/rapidarchitect/reddit_analyzer) (Search and Rate Reddit topics with a weighted summation)
 - [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt) (Chrome Extension to manage open-source models supported by Ollama, create custom models, and chat with models from a user-friendly UI)
@@ -394,7 +684,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ChibiChat](https://github.com/CosmicEventHorizon/ChibiChat) (Kotlin-based Android app to chat with Ollama and Koboldcpp API endpoints)
 - [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
 - [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
-- [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivent endpoint with Ollama support for running locally)
+- [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivalent endpoint with Ollama support for running locally)
 - [AntSK](https://github.com/AIDotNet/AntSK) (Out-of-the-box & Adaptable RAG Chatbot)
 - [MaxKB](https://github.com/1Panel-dev/MaxKB/) (Ready-to-use & flexible RAG Chatbot)
 - [yla](https://github.com/danielekp/yla) (Web interface to freely interact with your customized models)
@@ -402,6 +692,12 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
 - [AstrBot](https://github.com/Soulter/AstrBot/) (User-friendly LLM-based multi-platform chatbot with a WebUI, supporting RAG, LLM agents, and plugins integration)
 - [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
+- [Ellama](https://github.com/zeozeozeo/ellama) (Friendly native app to chat with an Ollama instance)
+- [screenpipe](https://github.com/mediar-ai/screenpipe) Build agents powered by your screen history
+- [Ollamb](https://github.com/hengkysteen/ollamb) (Simple yet rich in features, cross-platform built with Flutter and designed for Ollama. Try the [web demo](https://hengkysteen.github.io/demo/ollamb/).)
+- [Writeopia](https://github.com/Writeopia/Writeopia) (Text editor with integration with Ollama)
+- [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
+- [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 
 ### Cloud
 
@@ -441,10 +737,14 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [SwollamaCLI](https://github.com/marcusziade/Swollama) bundled with the Swollama Swift package. [Demo](https://github.com/marcusziade/Swollama?tab=readme-ov-file#cli-usage)
 - [aichat](https://github.com/sigoden/aichat) All-in-one LLM CLI tool featuring Shell Assistant, Chat-REPL, RAG, AI tools & agents, with access to OpenAI, Claude, Gemini, Ollama, Groq, and more.
 - [PowershAI](https://github.com/rrg92/powershai) PowerShell module that brings AI to terminal on Windows, including support for Ollama
+- [DeepShell](https://github.com/Abyss-c0re/deepshell) Your self-hosted AI assistant. Interactive Shell, Files and Folders analysis.
 - [orbiton](https://github.com/xyproto/orbiton) Configuration-free text editor and IDE with support for tab completion with Ollama.
+- [orca-cli](https://github.com/molbal/orca-cli) Ollama Registry CLI Application - Browse, pull, and download models from Ollama Registry in your terminal.
+- [GGUF-to-Ollama](https://github.com/jonathanhecl/gguf-to-ollama) - Importing GGUF to Ollama made easy (multiplatform)
 
 ### Apple Vision Pro
 
+- [SwiftChat](https://github.com/aws-samples/swift-chat) (Cross-platform AI chat app supporting Apple Vision Pro via "Designed for iPad")
 - [Enchanted](https://github.com/AugustDev/enchanted)
 
 ### Database
@@ -467,7 +767,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Libraries
 
-- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
+- [LangChain](https://python.langchain.com/docs/integrations/chat/ollama/) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
 - [Yacana](https://remembersoftwares.github.io/yacana/) (User-friendly multi-agent framework for brainstorming and executing predetermined flows with built-in tool integration)
@@ -514,18 +814,20 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Swollama for Swift](https://github.com/marcusziade/Swollama) with [DocC](https://marcusziade.github.io/Swollama/documentation/swollama/)
 - [GoLamify](https://github.com/prasad89/golamify)
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
-- [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
+- [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in a unified API)
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
 - [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
 - [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
+- [Ollama for D](https://github.com/kassane/ollama-d)
 
 ### Mobile
 
+- [SwiftChat](https://github.com/aws-samples/swift-chat) (Lightning-fast Cross-platform AI chat app with native UI for Android, iOS, and iPad)
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
-- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy-focused LLM chat interface with optional encryption)
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) (No need for Termux, start the Ollama service with one click on an Android device)
 - [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
 
@@ -549,7 +851,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Obsidian Local GPT plugin](https://github.com/pfrankov/obsidian-local-gpt)
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
-- [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy that allows you to use ollama as a copilot like Github copilot)
+- [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy that allows you to use Ollama as a copilot like GitHub Copilot)
 - [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
 - [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and Hugging Face)
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
@@ -559,8 +861,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 - [ChatGPTBox: All in one browser extension](https://github.com/josStorer/chatGPTBox) with [Integrating Tutorial](https://github.com/josStorer/chatGPTBox/issues/616#issuecomment-1975186467)
 - [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Chat/moderation bot written in python. Uses Ollama to create personalities.
-- [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts to automatically install ollama client & models on any OS for apps that depends on ollama server)
-- [Terraform AWS Ollama & Open WebUI](https://github.com/xuyangbocn/terraform-aws-self-host-llm) (A Terraform module to deploy on AWS a ready-to-use Ollama service, together with its front end Open WebUI service.)
+- [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts to automatically install ollama client & models on any OS for apps that depend on ollama server)
+- [Terraform AWS Ollama & Open WebUI](https://github.com/xuyangbocn/terraform-aws-self-host-llm) (A Terraform module to deploy on AWS a ready-to-use Ollama service, together with its front-end Open WebUI service.)
 - [node-red-contrib-ollama](https://github.com/jakubburkiewicz/node-red-contrib-ollama)
 - [Local AI Helper](https://github.com/ivostoykov/localAI) (Chrome and Firefox extensions that enable interactions with the active tab and customisable API endpoints. Includes secure storage for user prompts.)
 - [vnc-lm](https://github.com/jake83741/vnc-lm) (Discord bot for messaging with LLMs through Ollama and LiteLLM. Seamlessly move between local and flagship models.)
@@ -573,14 +875,17 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
 - [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
 - [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) (telegram bot, primary for RP. Oobabooga-like buttons, [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) API integration e.t.c)
+- [mcp-llm](https://github.com/sammcj/mcp-llm) (MCP Server to allow LLMs to call other LLMs)
 
 ### Supported backends
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 
 ### Observability
+- [Opik](https://www.comet.com/docs/opik/cookbook/ollama) is an open-source platform to debug, evaluate, and monitor your LLM applications, RAG systems, and agentic workflows with comprehensive tracing, automated evaluations, and production-ready dashboards. Opik supports native intergration to Ollama.
 - [Lunary](https://lunary.ai/docs/integrations/ollama) is the leading open-source LLM observability platform. It provides a variety of enterprise-grade features such as real-time analytics, prompt templates management, PII masking, and comprehensive agent tracing.
 - [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.
+

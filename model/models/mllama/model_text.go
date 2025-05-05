@@ -4,29 +4,32 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
 
 type TextSelfAttention struct {
-	Query  *nn.Linear `gguf:"attn_q"`
-	Key    *nn.Linear `gguf:"attn_k"`
-	Value  *nn.Linear `gguf:"attn_v"`
-	Output *nn.Linear `gguf:"attn_output"`
+	Query       *nn.Linear `gguf:"attn_q"`
+	Key         *nn.Linear `gguf:"attn_k"`
+	Value       *nn.Linear `gguf:"attn_v"`
+	Output      *nn.Linear `gguf:"attn_output"`
+	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
 }
 
 func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
+	ropeType := uint32(0)
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -39,8 +42,12 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	// This will only get called for layers in the causal cache, which are just the self attention layers
-	return key.RoPE(ctx, shift, m.RopeFactors, m.ropeDim, m.ropeBase, m.ropeScale), nil
+	// This will only get called for layers in the cache, which are just the self attention layers
+	if sa, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
+		return key.RoPE(ctx, shift, sa.SelfAttention.RopeFactors, m.ropeDim, uint32(0), m.ropeBase, m.ropeScale), nil
+	}
+
+	return key, nil
 }
 
 type TextMLP struct {
@@ -170,7 +177,7 @@ type TextDecoder struct {
 func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	for i, layer := range d.Layers {
 		layerType := selfAttentionLayer
-		if slices.Contains(opts.crossAttentionLayers, uint32(i)) {
+		if slices.Contains(opts.crossAttentionLayers, int32(i)) {
 			layerType = crossAttentionLayer
 		}
 
@@ -191,13 +198,11 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs,
 }
 
 type TextModelOptions struct {
-	RopeFactors ml.Tensor `gguf:"rope_freqs.weight"`
-
 	hiddenSize, numHeads, numKVHeads int
 	eps, ropeBase, ropeScale         float32
 	ropeDim                          uint32
 
-	crossAttentionLayers []uint32
+	crossAttentionLayers []int32
 }
 
 type TextModel struct {
@@ -216,11 +221,11 @@ func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, mask
 	return m.Output.Forward(ctx, hiddenState)
 }
 
-func newTextModel(c ml.Config) *TextModel {
+func newTextModel(c fs.Config) *TextModel {
 	var decoderLayers []TextDecoderLayer
 	for i := range c.Uint("block_count") {
 		var textDecoderLayer TextDecoderLayer
-		if slices.Contains(c.Uints("attention.cross_attention_layers"), i) {
+		if slices.Contains(c.Ints("attention.cross_attention_layers"), int32(i)) {
 			textDecoderLayer = &TextCrossAttentionDecoderLayer{}
 		} else {
 			textDecoderLayer = &TextSelfAttentionDecoderLayer{}
@@ -239,7 +244,7 @@ func newTextModel(c ml.Config) *TextModel {
 			ropeBase:             c.Float("rope.freq_base"),
 			ropeScale:            c.Float("rope.freq_scale", 1),
 			ropeDim:              c.Uint("rope.dimension_count"),
-			crossAttentionLayers: c.Uints("attention.cross_attention_layers"),
+			crossAttentionLayers: c.Ints("attention.cross_attention_layers"),
 		},
 	}
 }

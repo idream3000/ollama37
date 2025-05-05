@@ -35,6 +35,7 @@ import (
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
@@ -147,23 +148,27 @@ func (c *Context) Model() *Model {
 }
 
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
-	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
+	C.llama_kv_self_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
 
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
-	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
+	return bool(C.llama_kv_self_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
 
 func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
-	C.llama_kv_cache_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
+	C.llama_kv_self_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
 }
 
 func (c *Context) KvCacheClear() {
-	C.llama_kv_cache_clear(c.c)
+	C.llama_kv_self_clear(c.c)
 }
 
 func (c *Context) KvCacheDefrag() {
-	C.llama_kv_cache_defrag(c.c)
+	C.llama_kv_self_defrag(c.c)
+}
+
+func (c *Context) KvCacheCanShift() bool {
+	return bool(C.llama_kv_self_can_shift(c.c))
 }
 
 // Get the embeddings for a sequence id
@@ -668,4 +673,95 @@ func SchemaToGrammar(schema []byte) []byte {
 		return nil
 	}
 	return buf[:n]
+}
+
+type TokenData struct {
+	ID    int32
+	Logit float32
+}
+
+type Grammar struct {
+	c  *C.struct_llama_grammar
+	mu sync.Mutex
+}
+
+func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []uint32) *Grammar {
+	cGrammar := C.CString(grammar)
+	defer C.free(unsafe.Pointer(cGrammar))
+
+	cTokens := make([]C.uint32_t, len(vocabIds))
+	for i, token := range vocabIds {
+		cTokens[i] = C.uint32_t(token)
+	}
+
+	cPieces := make([]*C.char, len(vocabValues))
+	for i, piece := range vocabValues {
+		cPieces[i] = C.CString(piece)
+		defer C.free(unsafe.Pointer(cPieces[i]))
+	}
+
+	cEogTokens := make([]C.uint32_t, len(eogTokens))
+	for i, token := range eogTokens {
+		cEogTokens[i] = C.uint32_t(token)
+	}
+
+	g := C.grammar_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(cTokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(cEogTokens)))
+	if g == nil {
+		return nil
+	}
+
+	return &Grammar{c: g}
+}
+
+func (g *Grammar) Free() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.c != nil {
+		C.grammar_free(g.c)
+		g.c = nil
+	}
+}
+
+func (g *Grammar) Apply(tokens []TokenData) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.c == nil {
+		return
+	}
+
+	tds := make([]C.struct_llama_token_data, len(tokens))
+	for i, token := range tokens {
+		tds[i] = C.struct_llama_token_data{
+			id:    C.int32_t(token.ID),
+			logit: C.float(token.Logit),
+			p:     C.float(0.0),
+		}
+	}
+	tda := &C.llama_token_data_array{
+		data:     (*C.struct_llama_token_data)(unsafe.Pointer(&tds[0])),
+		size:     C.size_t(len(tokens)),
+		selected: C.int64_t(-1),
+		sorted:   C.bool(false),
+	}
+	var pinner runtime.Pinner
+	pinner.Pin(&tds[0])
+	defer pinner.Unpin()
+
+	C.grammar_apply(g.c, tda)
+	for i := range tokens {
+		tokens[i].Logit = float32(tds[i].logit)
+	}
+}
+
+func (g *Grammar) Accept(token int32) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Check if grammar was freed
+	if g.c == nil {
+		return
+	}
+
+	C.grammar_accept(g.c, C.llama_token(token))
 }

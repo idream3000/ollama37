@@ -7,14 +7,20 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/ggml"
 )
 
 type ModelParameters struct {
-	Architectures []string `json:"architectures"`
-	VocabSize     uint32   `json:"vocab_size"`
+	Architectures []string       `json:"architectures"`
+	VocabSize     uint32         `json:"vocab_size"`
+	TextModel     TextParameters `json:"text_config"`
+}
+
+type TextParameters struct {
+	VocabSize uint32 `json:"vocab_size"`
 }
 
 type AdapterParameters struct {
@@ -79,14 +85,6 @@ func (ModelParameters) specialTokenTypes() []string {
 	}
 }
 
-func (ModelParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
-	return ggml.WriteGGUF(ws, kv, ts)
-}
-
-func (AdapterParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
-	return ggml.WriteGGUF(ws, kv, ts)
-}
-
 type ModelConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) ggml.KV
@@ -98,8 +96,6 @@ type ModelConverter interface {
 
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
-	// writeFile writes the model to the provided io.WriteSeeker
-	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
 type moreParser interface {
@@ -114,8 +110,6 @@ type AdapterConverter interface {
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
-
-	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
 func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
@@ -153,7 +147,7 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
+	return writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
@@ -177,14 +171,20 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 
 	var conv ModelConverter
 	switch p.Architectures[0] {
-	case "LlamaForCausalLM", "MistralForCausalLM":
+	case "LlamaForCausalLM":
 		conv = &llamaModel{}
+	case "Llama4ForConditionalGeneration":
+		conv = &llama4Model{}
+	case "Mistral3ForConditionalGeneration":
+		conv = &mistral3Model{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
 	case "GemmaForCausalLM":
 		conv = &gemmaModel{}
 	case "Gemma2ForCausalLM":
 		conv = &gemma2Model{}
+	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
+		conv = &gemma3Model{Architecture: p.Architectures[0]}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
@@ -194,7 +194,7 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
 	default:
-		return errors.New("unsupported architecture")
+		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {
@@ -213,7 +213,14 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	}
 
 	vocabSize := int(p.VocabSize)
+	if vocabSize == 0 {
+		tVocabSize := int(p.TextModel.VocabSize)
+		vocabSize = tVocabSize
+	}
+
 	switch {
+	case vocabSize == 0:
+		slog.Warn("vocabulary size was not explicitly set by the model", "default size", len(t.Vocabulary.Tokens))
 	case vocabSize > len(t.Vocabulary.Tokens):
 		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
 		for i := range vocabSize - len(t.Vocabulary.Tokens) {
@@ -232,5 +239,13 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	return writeFile(ws, conv.KV(t), conv.Tensors(ts))
+}
+
+func writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
+	for i := range ts {
+		ts[i].Shape = slices.Clone(ts[i].Shape)
+		slices.Reverse(ts[i].Shape)
+	}
+	return ggml.WriteGGUF(ws, kv, ts)
 }
