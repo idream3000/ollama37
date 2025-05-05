@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -1152,17 +1153,18 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		"X-Requested-With",
 
 		// OpenAI compatibility headers
-		"x-stainless-lang",
-		"x-stainless-package-version",
-		"x-stainless-os",
+		"OpenAI-Beta",
 		"x-stainless-arch",
+		"x-stainless-async",
+		"x-stainless-custom-poll-interval",
+		"x-stainless-helper-method",
+		"x-stainless-lang",
+		"x-stainless-os",
+		"x-stainless-package-version",
+		"x-stainless-poll-helper",
 		"x-stainless-retry-count",
 		"x-stainless-runtime",
 		"x-stainless-runtime-version",
-		"x-stainless-async",
-		"x-stainless-helper-method",
-		"x-stainless-poll-helper",
-		"x-stainless-custom-poll-interval",
 		"x-stainless-timeout",
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
@@ -1511,6 +1513,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
+	msgs = filterThinkTags(msgs, m)
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
@@ -1638,4 +1641,24 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
+}
+
+var thinkTagRegexp = regexp.MustCompile(`<think>(?s).*?</think>(\n)*`)
+
+func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
+	if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+		finalUserIndex := -1
+		for i, msg := range msgs {
+			if msg.Role == "user" {
+				finalUserIndex = i
+			}
+		}
+
+		for i, msg := range msgs {
+			if msg.Role == "assistant" && i < finalUserIndex {
+				msgs[i].Content = thinkTagRegexp.ReplaceAllString(msg.Content, "")
+			}
+		}
+	}
+	return msgs
 }

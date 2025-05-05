@@ -58,7 +58,7 @@ var defaultModelsPerGPU = 3
 // Default automatic value for parallel setting
 // Model will still need to fit in VRAM.  If this setting won't fit
 // we'll back off down to 1 to try to get it to fit
-var defaultParallel = 4
+var defaultParallel = 2
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
@@ -147,6 +147,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				s.loadedMu.Unlock()
 				if runner != nil {
 					if runner.needsReload(ctx, pending) {
+						slog.Debug("reloading", "runner", runner)
 						runnerToExpire = runner
 					} else {
 						// Runner is usable, return it
@@ -282,7 +283,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 				// Trigger an expiration to unload once it's done
 				runnerToExpire.refMu.Lock()
-				slog.Debug("resetting model to expire immediately to make room", "modelPath", runnerToExpire.modelPath, "refCount", runnerToExpire.refCount)
+				slog.Debug("resetting model to expire immediately to make room", "runner", runnerToExpire, "refCount", runnerToExpire.refCount)
 				if runnerToExpire.expireTimer != nil {
 					runnerToExpire.expireTimer.Stop()
 					runnerToExpire.expireTimer = nil
@@ -331,16 +332,16 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner.refCount--
 			if runner.refCount <= 0 {
 				if runner.sessionDuration <= 0 {
-					slog.Debug("runner with zero duration has gone idle, expiring to unload", "modelPath", runner.modelPath)
+					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
 					if runner.expireTimer != nil {
 						runner.expireTimer.Stop()
 						runner.expireTimer = nil
 					}
 					s.expiredCh <- runner
 				} else if runner.expireTimer == nil {
-					slog.Debug("runner with non-zero duration has gone idle, adding timer", "modelPath", runner.modelPath, "duration", runner.sessionDuration)
+					slog.Debug("runner with non-zero duration has gone idle, adding timer", "runner", runner, "duration", runner.sessionDuration)
 					runner.expireTimer = time.AfterFunc(runner.sessionDuration, func() {
-						slog.Debug("timer expired, expiring to unload", "modelPath", runner.modelPath)
+						slog.Debug("timer expired, expiring to unload", "runner", runner)
 						runner.refMu.Lock()
 						defer runner.refMu.Unlock()
 						if runner.expireTimer != nil {
@@ -351,18 +352,18 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 					})
 					runner.expiresAt = time.Now().Add(runner.sessionDuration)
 				} else {
-					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "modelPath", runner.modelPath, "duration", runner.sessionDuration)
+					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "runner", runner, "duration", runner.sessionDuration)
 					runner.expireTimer.Reset(runner.sessionDuration)
 					runner.expiresAt = time.Now().Add(runner.sessionDuration)
 				}
 			}
-			slog.Debug("after processing request finished event", "modelPath", runner.modelPath, "refCount", runner.refCount)
+			slog.Debug("after processing request finished event", "runner", runner, "refCount", runner.refCount)
 			runner.refMu.Unlock()
 		case runner := <-s.expiredCh:
-			slog.Debug("runner expired event received", "modelPath", runner.modelPath)
+			slog.Debug("runner expired event received", "runner", runner)
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
-				slog.Debug("expired event with positive ref count, retrying", "modelPath", runner.modelPath, "refCount", runner.refCount)
+				slog.Debug("expired event with positive ref count, retrying", "runner", runner, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
 					// So queue up another expired event
@@ -374,16 +375,16 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 
 			s.loadedMu.Lock()
-			slog.Debug("got lock to unload", "modelPath", runner.modelPath)
+			slog.Debug("got lock to unload", "runner", runner)
 			finished := runner.waitForVRAMRecovery()
 			runner.unload()
 			delete(s.loaded, runner.modelPath)
 			s.loadedMu.Unlock()
-			slog.Debug("runner released", "modelPath", runner.modelPath)
+			slog.Debug("runner released", "runner", runner)
 			runner.refMu.Unlock()
 
 			<-finished
-			slog.Debug("sending an unloaded event", "modelPath", runner.modelPath)
+			slog.Debug("sending an unloaded event", "runner", runner)
 			s.unloadedCh <- struct{}{}
 		}
 	}
@@ -406,7 +407,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	pending.successCh <- runner
 	go func() {
 		<-pending.ctx.Done()
-		slog.Debug("context for request finished")
+		slog.Debug("context for request finished", "runner", runner)
 		finished <- pending
 	}()
 }
@@ -441,10 +442,10 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		estimatedVRAM:   llama.EstimatedVRAM(),
 		estimatedTotal:  llama.EstimatedTotal(),
 		loading:         true,
-		refCount:        1,
+		pid:             llama.Pid(),
 	}
 	runner.numParallel = numParallel
-	runner.refMu.Lock()
+	runner.refMu.Lock() // hold lock until running or aborted
 
 	s.loadedMu.Lock()
 	s.loaded[req.model.ModelPath] = runner
@@ -455,13 +456,16 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		defer runner.refMu.Unlock()
 		if err = llama.WaitUntilRunning(req.ctx); err != nil {
 			slog.Error("error loading llama server", "error", err)
-			runner.refCount--
 			req.errCh <- err
 			slog.Debug("triggering expiration for failed load", "model", runner.modelPath)
 			s.expiredCh <- runner
 			return
 		}
 		slog.Debug("finished setting up runner", "model", req.model.ModelPath)
+		if runner.pid < 0 {
+			runner.pid = llama.Pid()
+		}
+		runner.refCount++
 		runner.loading = false
 		go func() {
 			<-req.ctx.Done()
@@ -479,7 +483,12 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 	}
 	predMap := map[predKey]uint64{} // Sum up the total predicted usage per GPU for all runners
 	s.loadedMu.Lock()
+	runners := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {
+		runners = append(runners, r)
+	}
+	s.loadedMu.Unlock()
+	for _, r := range runners {
 		r.refMu.Lock()
 		if r.llama != nil {
 			for _, gpu := range allGpus {
@@ -490,7 +499,6 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 		}
 		r.refMu.Unlock()
 	}
-	s.loadedMu.Unlock()
 
 	// Now that we've summed up all the GPU usage predictions across all the loaded runners, update the gpu list
 	for i := range allGpus {
@@ -537,12 +545,11 @@ func (s *Scheduler) filterGPUsWithoutLoadingModels(allGpus discover.GpuInfoList)
 
 // TODO consolidate sched_types.go
 type runnerRef struct {
-	refMu sync.Mutex
-	// refCond   sync.Cond // Signaled on transition from 1 -> 0 refCount
+	refMu    sync.Mutex
 	refCount uint // prevent unloading if > 0
-	// unloading bool      // set to true when we are trying to unload the runner
 
 	llama          llm.LlamaServer
+	pid            int
 	loading        bool                 // True only during initial load, then false forever
 	gpus           discover.GpuInfoList // Recorded at time of provisioning
 	estimatedVRAM  uint64
@@ -667,13 +674,44 @@ func (runner *runnerRef) waitForVRAMRecovery() chan any {
 	return finished
 }
 
-type ByDuration []*runnerRef
+func (runner *runnerRef) LogValue() slog.Value {
+	if runner == nil {
+		return slog.StringValue("nil")
+	}
+	attrs := []slog.Attr{}
+	if runner.model != nil {
+		attrs = append(attrs, slog.String("name", runner.model.Name))
+	}
+	if len(runner.gpus) > 0 {
+		attrs = append(attrs,
+			slog.String("inference", runner.gpus[0].Library),
+			slog.Int("devices", len(runner.gpus)),
+		)
+	}
+	attrs = append(attrs,
+		slog.String("size", format.HumanBytes2(runner.estimatedTotal)),
+		slog.String("vram", format.HumanBytes2(runner.estimatedVRAM)),
+		slog.Int("num_ctx", runner.NumCtx),
+		slog.Int("parallel", runner.numParallel),
+		slog.Int("pid", runner.pid),
+		slog.String("model", runner.modelPath),
+	)
+	return slog.GroupValue(attrs...)
+}
 
-func (a ByDuration) Len() int      { return len(a) }
-func (a ByDuration) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByDuration) Less(i, j int) bool {
-	// uint64 to turn negative time (never unload) to largest
-	return uint64(a[i].sessionDuration) < uint64(a[j].sessionDuration)
+type ByDurationAndName []*runnerRef
+
+func (a ByDurationAndName) Len() int      { return len(a) }
+func (a ByDurationAndName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByDurationAndName) Less(i, j int) bool {
+	// Primary sort by session duration (uint64 to handle negatives)
+	d1 := uint64(a[i].sessionDuration)
+	d2 := uint64(a[j].sessionDuration)
+	if d1 != d2 {
+		return d1 < d2
+	}
+	// Secondary sort by model path lex order
+	return a[i].modelPath < a[j].modelPath
 }
 
 // TODO - future consideration to pick runners based on size
@@ -775,7 +813,7 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 
 	// In the future we can enhance the algorithm to be smarter about picking the optimal runner to unload
 	// e.g., if we have multiple options, will one make room for the request?
-	sort.Sort(ByDuration(runnerList))
+	sort.Sort(ByDurationAndName(runnerList))
 
 	// First try to find a runner that's already idle
 	for _, runner := range runnerList {
@@ -783,12 +821,12 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 		rc := runner.refCount
 		runner.refMu.Unlock()
 		if rc == 0 {
-			slog.Debug("found an idle runner to unload")
+			slog.Debug("found an idle runner to unload", "runner", runner)
 			return runner
 		}
 	}
 	// None appear idle, just wait for the one with the shortest duration
-	slog.Debug("no idle runners, picking the shortest duration", "count", len(runnerList))
+	slog.Debug("no idle runners, picking the shortest duration", "runner_count", len(runnerList), "runner", runnerList[0])
 	return runnerList[0]
 }
 
@@ -805,8 +843,8 @@ func (s *Scheduler) unloadAllRunners() {
 
 func (s *Scheduler) expireRunner(model *Model) {
 	s.loadedMu.Lock()
-	defer s.loadedMu.Unlock()
 	runner, ok := s.loaded[model.ModelPath]
+	s.loadedMu.Unlock()
 	if ok {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
