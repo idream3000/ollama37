@@ -2,10 +2,9 @@
 FROM dogkeeper886/ollama37-builder AS builder
 
 # Copy source code and build
-RUN cd /usr/local/src \
-    && git clone https://github.com/dogkeeper886/ollama37 \
-    && cd ollama37 \
-    && CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake -B build \
+COPY . /usr/local/src/ollama37
+WORKDIR /usr/local/src/ollama37
+RUN CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake -B build \
     && CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake --build build \
     && go build -o ollama .
 

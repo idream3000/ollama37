@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://ollama.com">
-    <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+    <img alt="ollama" width="240" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </a>
 </div>
 
@@ -321,6 +321,12 @@ To pull the image from Docker Hub, use:
 
 ```bash
 docker pull dogkeeper886/ollama37
+```
+
+To build the ollama37 image locally for Tesla K80/Compute 3.7 support:
+
+```bash
+docker build -f ollama37.Dockerfile -t ollama37 .
 ```
 
 ### Libraries
@@ -704,6 +710,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.) 
 - [GPTranslate](https://github.com/philberndt/GPTranslate) (A fast and lightweight, AI powered desktop translation application written with Rust and Tauri. Features real-time translation with OpenAI/Azure/Ollama.)
 - [ollama launcher](https://github.com/NGC13009/ollama-launcher) (A launcher for Ollama, aiming to provide users with convenient functions such as ollama server launching, management, or configuration.)
+- [ai-hub](https://github.com/Aj-Seven/ai-hub) (AI Hub supports multiple models via API keys and Chat support via Ollama API.)
 
 ### Cloud
 
@@ -749,6 +756,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [GGUF-to-Ollama](https://github.com/jonathanhecl/gguf-to-ollama) - Importing GGUF to Ollama made easy (multiplatform)
 - [AWS-Strands-With-Ollama](https://github.com/rapidarchitect/ollama_strands) - AWS Strands Agents with Ollama Examples
 - [ollama-multirun](https://github.com/attogram/ollama-multirun) - A bash shell script to run a single prompt against any or all of your locally installed ollama models, saving the output and performance statistics as easily navigable web pages. ([Demo](https://attogram.github.io/ai_test_zone/))
+- [ollama-bash-toolshed](https://github.com/attogram/ollama-bash-toolshed) - Bash scripts to chat with tool using models. Add new tools to your shed with ease. Runs on Ollama.
 
 ### Apple Vision Pro
 
@@ -887,10 +895,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [mcp-llm](https://github.com/sammcj/mcp-llm) (MCP Server to allow LLMs to call other LLMs)
 - [SimpleOllamaUnity](https://github.com/HardCodeDev777/SimpleOllamaUnity) (Unity Engine extension for communicating with Ollama in a few lines of code. Also works at runtime)
 - [UnityCodeLama](https://github.com/HardCodeDev777/UnityCodeLama) (Unity Edtior tool to analyze scripts via Ollama)
+- [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) (Private, on-device AI Assistant, no cloud dependencies)
 
 ### Supported backends
 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) project founded by Georgi Gerganov.
 
 ### Observability
 - [Opik](https://www.comet.com/docs/opik/cookbook/ollama) is an open-source platform to debug, evaluate, and monitor your LLM applications, RAG systems, and agentic workflows with comprehensive tracing, automated evaluations, and production-ready dashboards. Opik supports native intergration to Ollama.
