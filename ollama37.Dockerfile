@@ -14,9 +14,12 @@ FROM rockylinux/rockylinux:8
 RUN dnf -y update
 
 # Copy only the built binary and any needed assets from the builder stage
-COPY --from=builder /usr/local/src/ollama37/ollama /usr/local/bin/ollama
+COPY --from=builder /usr/local/src/ollama37 /usr/local/src/ollama37
 COPY --from=builder /usr/local/lib64 /usr/local/lib64
 COPY --from=builder /usr/local/cuda-11.4/lib64 /usr/local/cuda-11.4/lib64
+
+# Create a symbolic link from the built binary to /usr/local/bin for easy access
+RUN ln -s /usr/local/src/ollama37/ollama /usr/local/bin/ollama
 
 # Set environment variables
 ENV LD_LIBRARY_PATH="/usr/local/lib64:/usr/local/cuda-11.4/lib64"
