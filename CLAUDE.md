@@ -18,14 +18,28 @@ CUDA Compute Capability 3.7 support is maintained in the following key locations
 
 - **`ml/backend/ggml/ggml/src/ggml-cuda/CMakeLists.txt:7`** - Core build configuration with `CMAKE_CUDA_ARCHITECTURES "37;50;61;70;75;80"`
 - **`CMakePresets.json:24`** - "CUDA 11" preset includes "37" (CUDA 12 dropped 3.7 support)
-- **`README.md:322`** - Tesla K80 optimization documentation
-- **`docs/gpu.md:33`** - Building guidance for older GPUs
+- **`README.md:63-66`** - Tesla K80 support overview and technical details
+- **`docs/manual-build.md`** - Comprehensive Tesla K80 build instructions and optimizations
+- **`docs/gpu.md:33`** - General GPU building guidance
 
 The project uses CUDA 11 toolchain to maintain compatibility with Tesla K80 and other Compute Capability 3.7 GPUs, as CUDA 12 officially dropped support for these architectures.
+
+## Documentation Structure
+
+The project documentation is organized as follows:
+
+- **`README.md`** - Concise overview, quick start, and basic usage (restructured for clarity)
+- **`docs/manual-build.md`** - Comprehensive manual build instructions for Tesla K80 optimization
+- **`docs/gpu.md`** - General GPU support and configuration
+- **`docs/api.md`** - Complete REST API reference
+- **`docs/development.md`** - Development setup and contribution guidelines
+- **`CLAUDE.md`** - This file, providing AI assistant guidance for the codebase
 
 ## Development Commands
 
 ### Building the Project
+
+#### Quick Build
 ```bash
 # Configure build (required on Linux/Intel macOS/Windows)
 cmake -B build
@@ -38,6 +52,19 @@ cmake --build build --config Release
 # Build Go binary
 go build -o ollama .
 ```
+
+#### Tesla K80 Optimized Build
+For Tesla K80 and CUDA Compute Capability 3.7 hardware, use specific compiler versions:
+```bash
+# Configure with GCC 10 and CUDA 11.4 support
+CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake -B build
+CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake --build build
+
+# Build Go binary
+go build -o ollama .
+```
+
+For complete Tesla K80 build instructions including prerequisite installation, see `docs/manual-build.md`.
 
 ### Running Ollama
 ```bash
