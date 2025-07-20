@@ -47,7 +47,7 @@ ollama run gemma3
 ```
 
 ### Supported Models
-All models from [ollama.com/library](https://ollama.com/library) including Llama 3.2, Gemma 3, Qwen 2.5, Phi-4, and Code Llama.
+All models from [ollama.com/library](https://ollama.com/library) including Llama 3.2, Gemma3n, Qwen 2.5, Phi-4, and Code Llama.
 
 ### REST API
 ```bash
@@ -66,7 +66,7 @@ curl http://localhost:11434/api/chat -d '{"model": "gemma3, "messages": [{"role"
 - **Optimized Builds**: Tesla K80-specific performance tuning
 
 ### Recent Updates
-- **v1.3.0** (2025-07-19): Added Gemma 3, Qwen2.5VL, latest upstream sync
+- **v1.3.0** (2025-07-19): Added Gemma3n, Qwen2.5VL, latest upstream sync
 - **v1.2.0** (2025-05-06): Qwen3, Gemma 3 12B, Phi-4 14B support
 
 ## Building from Source

@@ -122,7 +122,7 @@ Ollama is a local LLM server with Go backend and C++/CUDA acceleration:
 - Platform-specific files for Darwin, Linux, Windows
 
 **Model Layer** (`model/`): Handles model format conversion and tokenization:
-- `models/` - Model-specific implementations (Llama, Gemma, etc.)
+- `models/` - Model-specific implementations (Llama, Gemma3n, etc.)
 - `imageproc/` - Image processing for multimodal models
 - Tokenizer implementations (BPE, SentencePiece)
 
