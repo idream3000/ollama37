@@ -39,8 +39,8 @@ docker-compose up -d
 ### Run Your First Model
 ```bash
 # Download and run a model
-ollama pull llama3.2
-ollama run llama3.2 "Why is the sky blue?"
+ollama pull gemma3
+ollama run gemma3 "Why is the sky blue?"
 
 # Interactive chat
 ollama run gemma3
@@ -52,10 +52,10 @@ All models from [ollama.com/library](https://ollama.com/library) including Llama
 ### REST API
 ```bash
 # Generate response
-curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "prompt": "Hello Tesla K80!"}'
+curl http://localhost:11434/api/generate -d '{"model": "gemma3, "prompt": "Hello Tesla K80!"}'
 
 # Chat
-curl http://localhost:11434/api/chat -d '{"model": "llama3.2", "messages": [{"role": "user", "content": "Hello!"}]}'
+curl http://localhost:11434/api/chat -d '{"model": "gemma3, "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
 ## Technical Details
