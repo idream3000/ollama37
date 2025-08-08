@@ -5,7 +5,7 @@ FROM dogkeeper886/ollama37-builder AS builder
 COPY . /usr/local/src/ollama37
 WORKDIR /usr/local/src/ollama37
 RUN CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake -B build \
-    && CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake --build build \
+    && CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake --build build -j$(nproc) \
     && go build -o ollama .
 
 # ===== Stage 2: Runtime image =====
