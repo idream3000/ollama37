@@ -399,13 +399,14 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
 // pool with virtual memory
 #if defined(GGML_USE_VMM)
 struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
-    static const size_t CUDA_POOL_VMM_MAX_SIZE = 1ull << 35; // 32 GB
+    static const size_t CUDA_POOL_VMM_MAX_SIZE = 1ull << 35; // 32 GB default
 
     int device;
     CUdeviceptr pool_addr = 0;
     size_t pool_used = 0;
     size_t pool_size = 0;
     size_t granularity;
+    size_t max_pool_size;
 #if defined(GGML_USE_HIP)
     std::vector<std::pair<CUdeviceptr, size_t>> mappings;
 #endif
@@ -413,6 +414,16 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
     explicit ggml_cuda_pool_vmm(int device) :
         device(device),
         granularity(ggml_cuda_info().devices[device].vmm_granularity) {
+        // Get actual GPU memory and set a reasonable max pool size
+        size_t free_mem, total_mem;
+        ggml_cuda_set_device(device);
+        CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+        
+        // Use 90% of total GPU memory as max, or default 32GB, whichever is smaller
+        max_pool_size = std::min(CUDA_POOL_VMM_MAX_SIZE, (size_t)(total_mem * 0.9));
+        
+        // CRITICAL: Align max_pool_size to granularity to avoid CUDA_ERROR_INVALID_VALUE
+        max_pool_size = ((max_pool_size + granularity - 1) / granularity) * granularity;
     }
 
     ~ggml_cuda_pool_vmm() {
@@ -425,7 +436,7 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
 #else
             CU_CHECK(cuMemUnmap(pool_addr, pool_size));
 #endif
-            CU_CHECK(cuMemAddressFree(pool_addr, CUDA_POOL_VMM_MAX_SIZE));
+            CU_CHECK(cuMemAddressFree(pool_addr, max_pool_size));
         }
     }
 
@@ -441,7 +452,22 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
             size_t reserve_size = size - avail;
             reserve_size = granularity * ((reserve_size + granularity - 1) / granularity);
 
-            GGML_ASSERT(pool_size + reserve_size <= CUDA_POOL_VMM_MAX_SIZE);
+            GGML_ASSERT(pool_size + reserve_size <= max_pool_size);
+
+            // Check if we have enough free memory before attempting allocation
+            size_t free_mem, total_mem;
+            ggml_cuda_set_device(device);
+            CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+            
+            if (reserve_size > free_mem) {
+                // Not enough free memory, reduce reserve_size to what's available
+                reserve_size = (free_mem / granularity) * granularity; // round down to granularity
+                if (reserve_size == 0) {
+                    GGML_LOG_WARN("%s: Not enough free GPU memory on device %d (requested: %zu, available: %zu)\n", 
+                                  __func__, device, size, free_mem);
+                    return nullptr;
+                }
+            }
 
             // allocate more physical memory
             CUmemAllocationProp prop = {};
@@ -453,7 +479,7 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
 
             // reserve virtual address space (if not already reserved)
             if (pool_addr == 0) {
-                CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
+                CU_CHECK(cuMemAddressReserve(&pool_addr, max_pool_size, 0, 0, 0));
             }
 
             // map at the end of the pool
