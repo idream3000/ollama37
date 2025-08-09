@@ -246,18 +246,96 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 						// Update free memory from currently loaded models
 						s.updateFreeSpace(availGpus)
+						
+						// Check if this model requires multiple GPUs (Tesla K80 fix)
+						// If so, we need to ensure ALL required GPUs are clear of other models
 						fitGpus := pickBestFullFitByLibrary(pending, ggml, availGpus, &numParallel)
 						if fitGpus != nil {
-							slog.Debug("new model fits with existing models, loading")
-							s.loadFn(pending, ggml, fitGpus, numParallel)
-							break
+							// Check if this is a multi-GPU model request
+							if len(fitGpus) > 1 {
+								slog.Debug("multi-GPU model detected, checking for conflicts", 
+									"target_model", pending.model.ModelPath, 
+									"gpu_count", len(fitGpus))
+								// Check if any of the target GPUs have loaded models
+								hasConflict := false
+								s.loadedMu.Lock()
+								for _, loadedRunner := range s.loaded {
+									if loadedRunner.loading {
+										slog.Debug("skipping loading model", "model", loadedRunner.modelPath)
+										continue // Skip models that are still loading
+									}
+									slog.Debug("checking loaded model for conflicts", 
+										"loaded_model", loadedRunner.modelPath,
+										"loaded_gpus", len(loadedRunner.gpus))
+									// Check if any loaded model is using any of our target GPUs
+									for _, targetGpu := range fitGpus {
+										for _, loadedGpu := range loadedRunner.gpus {
+											if targetGpu.ID == loadedGpu.ID {
+												slog.Warn("multi-GPU model conflicts with loaded model",
+													"target_model", pending.model.ModelPath,
+													"loaded_model", loadedRunner.modelPath,
+													"conflicting_gpu", targetGpu.ID)
+												hasConflict = true
+												break
+											}
+										}
+										if hasConflict {
+											break
+										}
+									}
+									if hasConflict {
+										break
+									}
+								}
+								s.loadedMu.Unlock()
+								
+								if hasConflict {
+									// Check if conflicting models are still active (have refCount > 0)
+									conflictingRunner := s.findConflictingRunnerToUnload(fitGpus)
+									if conflictingRunner != nil {
+										conflictingRunner.refMu.Lock()
+										isActive := conflictingRunner.refCount > 0
+										conflictingRunner.refMu.Unlock()
+										
+										if isActive {
+											// Conflicting model is still processing, delay this request
+											slog.Warn("conflicting model is still active, delaying multi-GPU request", 
+												"conflicting_model", conflictingRunner.modelPath,
+												"target_model", pending.model.ModelPath)
+											go func() {
+												time.Sleep(s.reschedDelay)
+												s.pendingReqCh <- pending
+											}()
+											break
+										} else {
+											// Conflicting model is idle, can unload it
+											slog.Warn("found idle conflicting runner to unload", 
+												"runner", conflictingRunner.modelPath,
+												"refCount", conflictingRunner.refCount)
+											runnerToExpire = conflictingRunner
+											slog.Warn("setting runnerToExpire to trigger unload", "runner", runnerToExpire.modelPath)
+											// Don't break here - let the normal flow handle the unload
+										}
+									} else {
+										slog.Error("failed to find conflicting runner despite detecting conflict!")
+									}
+								} else {
+									slog.Debug("no conflicts detected for multi-GPU model")
+								}
+							}
+							
+							if runnerToExpire == nil {
+								slog.Debug("new model fits with existing models, loading")
+								s.loadFn(pending, ggml, fitGpus, numParallel)
+								break
+							}
 						}
 
 						// We couldn't find a set of GPUs to fully load the new
 						// model. If no other models are loading (both GPU lists
 						// are the same) then we need to unload another model to
 						// make room
-						if len(availGpus) < len(gpus) {
+						if runnerToExpire == nil && len(availGpus) < len(gpus) {
 							// There are other requests pending, and this one
 							// needs more time, so put it on the back of the
 							// queue so that we might satisfy other pending
@@ -271,25 +349,32 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							}()
 							break
 						}
-						runnerToExpire = s.findRunnerToUnload()
+						if runnerToExpire == nil {
+							runnerToExpire = s.findRunnerToUnload()
+						}
 					}
 				}
 
+				slog.Warn("exited model selection, checking runnerToExpire", "runnerToExpire", runnerToExpire != nil)
 				if runnerToExpire == nil {
 					// Shouildn't happen
 					slog.Error("runner to expire was nil!")
 					continue
 				}
 				// Trigger an expiration to unload once it's done
+				slog.Warn("attempting to unload runner", "runner", runnerToExpire.modelPath)
 				runnerToExpire.refMu.Lock()
-				slog.Debug("resetting model to expire immediately to make room", "runner", runnerToExpire, "refCount", runnerToExpire.refCount)
+				slog.Warn("resetting model to expire immediately to make room", "runner", runnerToExpire.modelPath, "refCount", runnerToExpire.refCount)
 				if runnerToExpire.expireTimer != nil {
 					runnerToExpire.expireTimer.Stop()
 					runnerToExpire.expireTimer = nil
 				}
 				runnerToExpire.sessionDuration = 0
 				if runnerToExpire.refCount <= 0 {
+					slog.Warn("sending idle runner to expired channel", "runner", runnerToExpire.modelPath)
 					s.expiredCh <- runnerToExpire
+				} else {
+					slog.Warn("runner still has references, waiting for refCount to reach 0", "runner", runnerToExpire.modelPath, "refCount", runnerToExpire.refCount)
 				}
 				runnerToExpire.refMu.Unlock()
 				// Wait for the unload to happen
@@ -301,7 +386,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					slog.Debug("shutting down scheduler pending loop")
 					return
 				case <-s.unloadedCh:
-					slog.Debug("unload completed", "runner", runnerToExpire)
+					slog.Warn("unload completed, retrying model load", "runner", runnerToExpire)
 					continue
 				}
 			}
@@ -828,6 +913,34 @@ func pickBestPartialFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.Gp
 		}
 	}
 	return byLibrary[bestFit]
+}
+
+// findConflictingRunnerToUnload finds a specific runner that conflicts with target GPUs
+func (s *Scheduler) findConflictingRunnerToUnload(targetGpus discover.GpuInfoList) *runnerRef {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	
+	// Find the first loaded model that uses any of our target GPUs
+	for _, loadedRunner := range s.loaded {
+		if loadedRunner.loading {
+			continue // Skip models that are still loading
+		}
+		
+		// Check if this loaded model is using any of our target GPUs
+		for _, targetGpu := range targetGpus {
+			for _, loadedGpu := range loadedRunner.gpus {
+				if targetGpu.ID == loadedGpu.ID {
+					slog.Debug("found conflicting runner using GPU", 
+						"runner", loadedRunner.modelPath, 
+						"gpu", targetGpu.ID)
+					return loadedRunner
+				}
+			}
+		}
+	}
+	
+	slog.Debug("no conflicting runner found for target GPUs")
+	return nil
 }
 
 // findRunnerToUnload finds a runner to unload to make room for a new model

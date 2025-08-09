@@ -598,41 +598,106 @@ static enum ggml_status ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer
 static void ggml_backend_cuda_buffer_memset_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
 
-    ggml_cuda_set_device(ctx->device);
-    CUDA_CHECK(cudaMemsetAsync((char *)tensor->data + offset, value, size, cudaStreamPerThread));
-    CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    // Device context must be set correctly - critical for model functionality
+    CUDA_CHECK(cudaSetDevice(ctx->device));
+
+    cudaError_t memset_result = cudaMemsetAsync((char *)tensor->data + offset, value, size, cudaStreamPerThread);
+    if (memset_result != cudaSuccess) {
+        GGML_LOG_ERROR("cudaMemsetAsync failed on device %d: %s\n", 
+                       ctx->device, cudaGetErrorString(memset_result));
+        cudaGetLastError(); // Clear error state
+        return;
+    }
+
+    cudaError_t sync_result = cudaStreamSynchronize(cudaStreamPerThread);
+    if (sync_result != cudaSuccess) {
+        GGML_LOG_ERROR("Stream synchronization failed on device %d in buffer_memset_tensor: %s\n", 
+                       ctx->device, cudaGetErrorString(sync_result));
+        cudaGetLastError(); // Clear error state
+        return;
+    }
 }
 
 static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
 
-    ggml_cuda_set_device(ctx->device);
-    CUDA_CHECK(cudaMemcpyAsync((char *)tensor->data + offset, data, size, cudaMemcpyHostToDevice, cudaStreamPerThread));
-    CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    // Device context must be set correctly - critical for model functionality
+    CUDA_CHECK(cudaSetDevice(ctx->device));
+
+    cudaError_t copy_result = cudaMemcpyAsync((char *)tensor->data + offset, data, size, cudaMemcpyHostToDevice, cudaStreamPerThread);
+    if (copy_result != cudaSuccess) {
+        GGML_LOG_ERROR("cudaMemcpyAsync failed on device %d: %s\n", 
+                       ctx->device, cudaGetErrorString(copy_result));
+        cudaGetLastError(); // Clear error state
+        return;
+    }
+
+    cudaError_t sync_result = cudaStreamSynchronize(cudaStreamPerThread);
+    if (sync_result != cudaSuccess) {
+        GGML_LOG_ERROR("Stream synchronization failed on device %d in buffer_set_tensor: %s\n", 
+                       ctx->device, cudaGetErrorString(sync_result));
+        cudaGetLastError(); // Clear error state
+        return;
+    }
 }
 
 static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
 
-    ggml_cuda_set_device(ctx->device);
-    CUDA_CHECK(cudaMemcpyAsync(data, (const char *)tensor->data + offset, size, cudaMemcpyDeviceToHost, cudaStreamPerThread));
-    CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    // Device context must be set correctly - critical for model functionality
+    CUDA_CHECK(cudaSetDevice(ctx->device));
+
+    cudaError_t copy_result = cudaMemcpyAsync(data, (const char *)tensor->data + offset, size, cudaMemcpyDeviceToHost, cudaStreamPerThread);
+    if (copy_result != cudaSuccess) {
+        GGML_LOG_ERROR("cudaMemcpyAsync failed on device %d: %s\n", 
+                       ctx->device, cudaGetErrorString(copy_result));
+        cudaGetLastError(); // Clear error state
+        return;
+    }
+
+    cudaError_t sync_result = cudaStreamSynchronize(cudaStreamPerThread);
+    if (sync_result != cudaSuccess) {
+        GGML_LOG_ERROR("Stream synchronization failed on device %d in buffer_get_tensor: %s\n", 
+                       ctx->device, cudaGetErrorString(sync_result));
+        cudaGetLastError(); // Clear error state
+        return;
+    }
 }
 
 static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * src, ggml_tensor * dst) {
     if (ggml_backend_buffer_is_cuda(src->buffer)) {
         ggml_backend_cuda_buffer_context * src_ctx = (ggml_backend_cuda_buffer_context *)src->buffer->context;
         ggml_backend_cuda_buffer_context * dst_ctx = (ggml_backend_cuda_buffer_context *)dst->buffer->context;
+
+        // Device context must be set correctly - critical for model functionality
+        CUDA_CHECK(cudaSetDevice(dst_ctx->device));
+
+        cudaError_t copy_result;
         if (src_ctx->device == dst_ctx->device) {
-            CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, ggml_nbytes(src), cudaMemcpyDeviceToDevice, cudaStreamPerThread));
+            copy_result = cudaMemcpyAsync(dst->data, src->data, ggml_nbytes(src), cudaMemcpyDeviceToDevice, cudaStreamPerThread);
         } else {
 #ifdef GGML_CUDA_NO_PEER_COPY
             return false;
 #else
-            CUDA_CHECK(cudaMemcpyPeerAsync(dst->data, dst_ctx->device, src->data, src_ctx->device, ggml_nbytes(src), cudaStreamPerThread));
+            copy_result = cudaMemcpyPeerAsync(dst->data, dst_ctx->device, src->data, src_ctx->device, ggml_nbytes(src), cudaStreamPerThread);
 #endif
         }
-        CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+
+        if (copy_result != cudaSuccess) {
+            GGML_LOG_ERROR("cudaMemcpy%sAsync failed (src device %d -> dst device %d): %s\n", 
+                           (src_ctx->device == dst_ctx->device) ? "" : "Peer",
+                           src_ctx->device, dst_ctx->device, cudaGetErrorString(copy_result));
+            cudaGetLastError(); // Clear error state
+            return false;
+        }
+
+        cudaError_t sync_result = cudaStreamSynchronize(cudaStreamPerThread);
+        if (sync_result != cudaSuccess) {
+            GGML_LOG_ERROR("Stream synchronization failed on device %d in buffer_cpy_tensor: %s\n", 
+                           dst_ctx->device, cudaGetErrorString(sync_result));
+            cudaGetLastError(); // Clear error state
+            return false;
+        }
         return true;
     }
     return false;
@@ -2503,6 +2568,18 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
 static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
 
+    // Device context must be set correctly - critical for model functionality
+    CUDA_CHECK(cudaSetDevice(cuda_ctx->device));
+    
+    // Check if stream is still valid before synchronization
+    cudaError_t query_result = cudaStreamQuery(cuda_ctx->stream());
+    if (query_result != cudaSuccess && query_result != cudaErrorNotReady) {
+        GGML_LOG_ERROR("Stream validation failed on device %d: %s\n", 
+                       cuda_ctx->device, cudaGetErrorString(query_result));
+        return;
+    }
+
+    // Use CUDA_CHECK for inference operations - we want to crash on errors, not silently fail
     CUDA_CHECK(cudaStreamSynchronize(cuda_ctx->stream()));
 
     GGML_UNUSED(backend);
