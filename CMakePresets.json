@@ -22,7 +22,7 @@
       "name": "CUDA 11",
       "inherits": [ "CUDA" ],
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "37;50;60;61;70;75;80;86;87;89;90;90a;120",
+        "CMAKE_CUDA_ARCHITECTURES": "37;50;60;61;70;75;80;86",
         "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets"
       }
     },
@@ -79,6 +79,11 @@
       "name": "CUDA",
       "configurePreset": "CUDA",
       "targets": [ "ggml-cuda" ]
+    },
+    {
+      "name": "CUDA 11",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 11"
     },
     {
       "name": "CUDA 12",
