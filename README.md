@@ -8,12 +8,26 @@
 
 Get up and running with large language models.
 
-K80 support. Ubuntu 22.04; cmake, golang; gcc-10 (important); nvidia driver 470-server (important); CUDA toolskit 11.4 (important).
+K80 support. 
+
+Ubuntu 22.04;
+
+cmake, golang; gcc-10 (important); 
+
+nvidia driver 470-server (important); 
+
+CUDA toolskit 11.4 (important).
+
+
 
 git clone;
+
 "cmake -B build";
+
 "cmake --build build";
+
 "go run . serve" to start;
+
 or "go build ." to build ollama.
 
 ### macOS
